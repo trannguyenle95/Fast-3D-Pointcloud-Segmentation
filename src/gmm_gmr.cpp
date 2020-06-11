@@ -125,22 +125,25 @@ Eigen::VectorXf GMM_GMR::gaussPDF(const Eigen::VectorXf & mean,
   auto sum_Px = Eigen::ArrayXXf(num_data,1);
   sum_Px = (Px.matrix().rowwise().sum()).replicate(1,num_GMMcomp); 
   Px = Px / sum_Px;
+  std::cout << "Px: " << Px << std::endl;
 
   // Compute expected means predicted_mean, given input x
-  auto predicted_mean_temp = Eigen::ArrayXXf(num_data,num_GMMcomp);
+  auto predicted_mean_temp_unmul = Eigen::ArrayXXf(num_data,num_GMMcomp);
   for (size_t i = 0; i < num_GMMcomp; i++)
   {
     auto muy_in = means[i].transpose().topLeftCorner(1,in_dim).replicate(num_data,1);
     auto muy_out = means[i].transpose().bottomRightCorner(1,outdim).replicate(num_data,1);
     auto sigma_out_in = covariances[i].bottomLeftCorner(outdim,in_dim);
     auto sigma_in_in = covariances[i].topLeftCorner(in_dim,in_dim);
-    predicted_mean_temp.matrix().col(i) = muy_out + (x-muy_in)*((sigma_out_in * sigma_in_in.inverse()).transpose());
+    predicted_mean_temp_unmul.matrix().col(i) = muy_out + (x-muy_in)*((sigma_out_in * sigma_in_in.inverse()).transpose());
   }
-  predicted_mean_temp = Px * predicted_mean_temp;
+  auto predicted_mean_temp = Px * predicted_mean_temp_unmul;
   Eigen::VectorXf predicted_mean = predicted_mean_temp.matrix().rowwise().sum();
 
   // Compute expected covariances predicted_covariances, given input x
   auto predicted_covariances_temp = Eigen::ArrayXXf(outdim,num_GMMcomp);
+  auto predicted_covariances_tilde = Eigen::ArrayXXf(outdim,num_GMMcomp);
+
   for (size_t i = 0; i < num_GMMcomp; i++)
   {
     auto sigma_out_out = covariances[i].bottomRightCorner(outdim,outdim);
@@ -149,9 +152,12 @@ Eigen::VectorXf GMM_GMR::gaussPDF(const Eigen::VectorXf & mean,
     auto sigma_in_out = covariances[i].topRightCorner(in_dim,outdim);
     predicted_covariances_temp.matrix().col(i) = sigma_out_out - (sigma_out_in * sigma_in_in.inverse() * sigma_in_out);
   }
-  auto temp =  predicted_covariances_temp.replicate(num_data,1);
-  auto out_unsum = Px * temp;
-  Eigen::MatrixXf predicted_covariances = out_unsum.rowwise().sum();
+  predicted_covariances_tilde = predicted_covariances_temp + predicted_mean_temp_unmul.pow(2);
+  auto temp =  predicted_covariances_tilde.replicate(num_data,1);
+  auto out_unsum = Px * temp; //default without l
+
+  Eigen::MatrixXf predicted_covariances = out_unsum.rowwise().sum(); //default
+  predicted_covariances = predicted_covariances - predicted_mean*predicted_mean.transpose();
   return std::tuple<Eigen::VectorXf,Eigen::MatrixXf>{predicted_mean,predicted_covariances}; 
 }
 

@@ -1,5 +1,5 @@
 #include "supervoxel_clustering/gmm.h"
-
+#include "KMeansRexCore.cpp"
 #define EPSILON (1e-5)
 #define MAXITER 200
 #define TERMINATION_THRESHOLD 1e-8f
@@ -33,6 +33,8 @@ GMMExpectationMaximization::uint GMMExpectationMaximization::execute(uint num_ga
 {
   if (!autoInitializeByEqualIntervals(num_gaussians,time_column,data))
     return 0;
+  // if (!InitializeByKMeans(num_gaussians,data))
+  //   return 0;
   return execute(data);
 }
 
@@ -145,7 +147,7 @@ bool GMMExpectationMaximization::autoInitializeByEqualIntervals(uint num_gaussia
     {
       m_means[g] = dataset.row(g % data_count);
       m_covs[g] = MatrixX::Identity(dim,dim);
-      m_weights[g] = 1.0f / Real(num_gaussians);
+      m_weights[g] = 1.0f / Real(num_gaussians) ;
       continue;
     }
 
@@ -192,4 +194,48 @@ GMMExpectationMaximization::Real GMMExpectationMaximization::getBIC(const Matrix
     sum += std::log(expectation(dataset.row(i).transpose()));
 
   return -sum + m_bic_params_weight * (number_of_parameters / 2.0) * std::log(Real(data_count));
+}
+
+bool GMMExpectationMaximization::InitializeByKMeans(uint num_gaussians,const MatrixX & dataset_matrix)
+{
+  Eigen::ArrayXXd dataset(dataset_matrix.innerSize(),dataset_matrix.outerSize());
+  dataset = dataset_matrix.cast<double>();
+  uint data_count = dataset.innerSize();
+  uint dim = dataset.outerSize();
+  int n_iters = 100;
+  int seed = 42;
+  Eigen::ArrayXXd mu = Eigen::ArrayXXd::Zero(num_gaussians, dim);
+  Eigen::ArrayXd data_id = Eigen::ArrayXd::Zero(data_count);
+
+  m_weights.clear();
+  m_weights.resize(num_gaussians);
+  m_means.clear();
+  m_means.resize(num_gaussians,VectorX::Zero(dim));
+
+  RunKMeans(
+        dataset.data(),
+        data_count, dim, num_gaussians,
+        n_iters, seed, "plusplus",
+        mu.data(),
+        data_id.data());
+
+  for (uint g = 0; g < num_gaussians; g++)
+  {
+    int num_dataid = 0;
+    Eigen::VectorXf means_temp = mu.matrix().row(g).cast <float> ();
+    m_means[g] = means_temp;
+    for (size_t i = 0; i < data_id.size(); i++)
+      {
+        if (data_id(i) == g){
+          num_dataid++;
+        }
+      }
+    float weight = num_dataid/data_count;
+    m_weights[g] = weight;      
+    continue;
+  }
+  for (auto i:m_means){
+    std::cout << "Mean k mean: " << i << std::endl;
+  }
+  return true;
 }

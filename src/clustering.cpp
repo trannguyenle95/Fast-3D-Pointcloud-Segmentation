@@ -50,6 +50,10 @@
  * @return true if the two regions form a convex angle between them or false 
  *         otherwise
  */
+std::vector<Eigen::VectorXf> gmm_means_global;
+std::vector<Eigen::MatrixXf> gmm_covariances_global;
+std::vector<float> gmm_weights_global;
+
 bool Clustering::is_convex(Normal norm1, PointT centroid1, Normal norm2,
         PointT centroid2) const {
     Eigen::Vector3f N1 = norm1.getNormalVector3fMap();
@@ -207,7 +211,6 @@ float Clustering::delta(Supervoxel::Ptr supvox1,
     std::array<float,3> deltas = delta_c_g_h(supvox1, supvox2);
     
     float delta = t_c(deltas[0]) + t_g(deltas[1]) + t_h(deltas[2]);
-
     //printf("delta_c = %f | delta_g = %f | delta_h = %f | delta = %f\n", 
     //       deltas[0], deltas[1], deltas[2], delta);
     
@@ -277,10 +280,38 @@ ClusteringT Clustering::estimate_frictions_and_statistics(PCLClusteringT segm,
 
 void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
     float count = 0;
+    float total_count = 0;
+    float colorpoint_per_count = 0;
+    float fricpoint_per_count = 0;
     // Build the GMM
     GMM_GMR gmmnode;
     int n_rows = 100; //0.03 seed ok
+    Eigen::Vector4f mean_background, last_mean_background; 
+    mean_background << 0,0,0,0;
+    Eigen::Matrix4f covariance_background;
+    float rr, rg, rb, rf, gg, gb, gf, bb, bf, ff;
+    rr = rg = rb = rf = gg = gb = gf = bb = bf = ff = 0;
+    typename pcl::PointCloud<PointT>::iterator v_itr, v_itr_end;
+    typename pcl::PointCloud<pcl::PointXYZI>::iterator f_itr, f_itr_end;
     std::vector<Eigen::MatrixXf> gmm_all_sample;
+    for(auto iter : *segmentation) {
+        // Calculate mean and cov for background class
+        total_count++;
+        last_mean_background.head(3) = mean_background.head(3);
+        mean_background.head(3) = mean_background.head(3) + (1 / total_count) * (iter.second->mean_.head(3) - mean_background.head(3));
+        v_itr = iter.second->voxels_->begin();
+        v_itr_end = iter.second->voxels_->end();
+        for (; v_itr != v_itr_end; ++v_itr) {
+
+            rr = rr + (v_itr->r - last_mean_background(0)) * (v_itr->r - mean_background(0));
+            gg = gg + (v_itr->g - last_mean_background(1)) * (v_itr->g - mean_background(1));
+            bb = bb + (v_itr->b - last_mean_background(2)) * (v_itr->b - mean_background(2));
+            rg = rg + (v_itr->r - last_mean_background(0)) * (v_itr->g - mean_background(1));
+            rb = rb + (v_itr->r - last_mean_background(0)) * (v_itr->b - mean_background(2));
+            gb = gb + (v_itr->g - last_mean_background(1)) * (v_itr->b - mean_background(2));
+            colorpoint_per_count++;
+        }
+    }
     for(auto iter : *segmentation) {
         float f = iter.second->friction_;
         if(f != 0) {
@@ -288,17 +319,91 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
             Eigen::MatrixXf gmm_indata(n_rows,4);
             gmm_indata << normX_solver.samples(n_rows).transpose();
             gmm_all_sample.push_back(gmm_indata);
-            count++; 
+            count++;
+            // // Calculate mean and cov for background class
+            last_mean_background(3) = mean_background(3);
+            mean_background(3) = mean_background(3) + (1 / count) * (iter.second->mean_(3) - mean_background(3));
+            // last_mean_background = mean_background;
+            // mean_background = mean_background + (1 / count) * (iter.second->mean_ - mean_background);
+            // v_itr = iter.second->voxels_->begin();
+            // v_itr_end = iter.second->voxels_->end();
+            // for (; v_itr != v_itr_end; ++v_itr) {
+            //     rr = rr + (v_itr->r - last_mean_background(0)) * (v_itr->r - mean_background(0));
+            //     gg = gg + (v_itr->g - last_mean_background(1)) * (v_itr->g - mean_background(1));
+            //     bb = bb + (v_itr->b - last_mean_background(2)) * (v_itr->b - mean_background(2));
+            //     rg = rg + (v_itr->r - last_mean_background(0)) * (v_itr->g - mean_background(1));
+            //     rb = rb + (v_itr->r - last_mean_background(0)) * (v_itr->b - mean_background(2));
+            //     gb = gb + (v_itr->g - last_mean_background(1)) * (v_itr->b - mean_background(2));
+            //     colorpoint_per_count++;
+            // }
+            std::vector<int> nn_id(1);
+            std::vector<float> nn_squared_dist(1);
+            pcl::KdTreeFLANN<PointT> kdtree;
+            kdtree.setInputCloud(iter.second->voxels_);
+            f_itr = iter.second->frictions_->begin();
+            f_itr_end = iter.second->frictions_->end();
+            for (; f_itr != f_itr_end; ++f_itr) {
+                PointT p;
+                p.x = f_itr->x;
+                p.y = f_itr->y;
+                p.z = f_itr->z;
+                if(kdtree.nearestKSearch(p, 1, nn_id, nn_squared_dist) > 0) {
+                    for(std::size_t i = 0; i < nn_id.size (); ++i) {
+                    PointT nn_p = iter.second->voxels_->points[ nn_id[i] ];
+                        // rf = rf + (nn_p.r - last_mean_background(0)) * (nn_p.r - mean_background(0));
+                        // gf = gf + (nn_p.g - last_mean_background(1)) * (nn_p.g - mean_background(1));
+                        // bf = bf + (nn_p.b - last_mean_background(2)) * (nn_p.b - mean_background(2));
+                        ff = ff + (f_itr->intensity -last_mean_background(3)) * (f_itr->intensity - mean_background(3));
+                        fricpoint_per_count++;
+
+                    }
+                }
+            }
         }
     }
+    rr = rr / (colorpoint_per_count);
+    gg = gg / (colorpoint_per_count);
+    bb = bb / (colorpoint_per_count);
+    rg = rg / (colorpoint_per_count);
+    rb = rb / (colorpoint_per_count);
+    gb = gb / (colorpoint_per_count);
+    rf = rf / (fricpoint_per_count);
+    gf = gf / (fricpoint_per_count);
+    bf = bf / (fricpoint_per_count);
+    ff = ff / (fricpoint_per_count);
+    covariance_background << rr, rg, rb, 1, 
+                            rg, gg, gb, 1,
+                            rb, gb, bb, 1,
+                            1, 1, 1, 1;
+
+    std::cout << "color: " << colorpoint_per_count << " -- fric count: " << fricpoint_per_count << std::endl;
+    std::cout << "mean background: " << mean_background << std::endl;
+    std::cout << "cov background: " << covariance_background << std::endl;
+
     Eigen::MatrixXf gmm_input;
     gmm_input = gmmnode.VStack(gmm_all_sample);
-    std::cout << "Number of touched regions: " << count << std::endl;
+    std::cout << "Number of touched points: " << count << std::endl;
     std::cout << "Size: " << gmm_input.innerSize()  << gmm_input.outerSize() << std::endl;
     auto gmm_variables = gmmnode.fit_gmm(gmm_input);
     auto gmm_means = std::get<0>(gmm_variables);
     auto gmm_covariances = std::get<1>(gmm_variables);
-    auto gmm_weights = std::get<2>(gmm_variables);
+    auto gmm_weights_pre = std::get<2>(gmm_variables);
+    std::vector<float> gmm_weights;
+    if (gmm_weights_pre.size() == 2){
+        gmm_means.push_back(mean_background);
+        gmm_covariances.push_back(covariance_background);
+        for (auto i: gmm_weights_pre){
+            i = i*(1-0.2);
+            gmm_weights.push_back(i);
+        }
+        gmm_weights.push_back(0.2);
+    }
+    else{
+        gmm_weights = gmm_weights_pre;
+    }
+    gmm_means_global = gmm_means;
+    gmm_covariances_global = gmm_covariances;
+    gmm_weights_global = gmm_weights;
 
     // Estimate through GMR
     for(auto iter : *segmentation) {
@@ -307,14 +412,15 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
             x = iter.second->mean_.head(3).transpose();
             auto predicted_values = gmmnode.gmr(gmm_weights,gmm_means,gmm_covariances,x,3,1);
             iter.second->friction_ = std::get<0>(predicted_values)[0];
-            auto predicted_covariances = std::get<1>(predicted_values)(0,0);
+            iter.second->friction_variance_ = std::get<1>(predicted_values)(0,0);
+            // auto predicted_covariances = std::get<1>(predicted_values)(0,0);
             // if (iter.second->friction_ < 0){
             //     iter.second->friction_ = abs(iter.second->friction_);
             // }
             if (iter.second->friction_ >= 1){
-                iter.second->friction_ = iter.second->friction_ - predicted_covariances;
+                iter.second->friction_ = iter.second->friction_ - iter.second->friction_variance_;
             }
-            std::cout << "Mean input: " << x << " -- Fric: " << iter.second->friction_ << " -- Cov: " << predicted_covariances << std::endl;
+            std::cout << "Mean input: " << x << " -- Fric: " << iter.second->friction_ << " -- Cov: " << iter.second->friction_variance_ << std::endl;
         }
     }
     for (auto i: gmm_weights)
@@ -391,9 +497,11 @@ void Clustering::init_merging_parameters(DeltasDistribT deltas_c,
             float mean_c = deltas_mean(deltas_c);
             float mean_g = deltas_mean(deltas_g);
             float mean_h = deltas_mean(deltas_h);
-            lambda_c = (mean_g * mean_h) / 
-                      (mean_c * mean_g + mean_g * mean_h + mean_c * mean_h);
-            lambda_g = lambda_c * mean_c / mean_g;
+            // lambda_c = (mean_g * mean_h) / 
+            //           (mean_c * mean_g + mean_g * mean_h + mean_c * mean_h);
+            // lambda_g = lambda_c * mean_c / mean_g;
+            lambda_c = mean_h / (mean_c + mean_h);
+            lambda_g = 0;
             break;
         }
         case EQUALIZATION:
@@ -574,6 +682,7 @@ void Clustering::merge(std::pair<uint32_t, uint32_t> supvox_ids) {
 
     Eigen::Vector4f new_norm;
     float new_curv;
+    int count = 0;
     computePointNormal(*(sup_new->voxels_), new_norm, new_curv);
     flipNormalTowardsViewpoint(sup_new->centroid_, 0, 0, 0, new_norm);
     new_norm[3] = 0.0f;
@@ -590,8 +699,20 @@ void Clustering::merge(std::pair<uint32_t, uint32_t> supvox_ids) {
                              sup_new->frictions_->size();
         //sup_new->compute_statistics(); // TODO: uncomment after covariance calculation is fixed
     } else {
-        //sup_new->compute_statistics(); // TODO: uncomment after covariance calculation is fixed
-        sup_new->friction_ = sup1->friction_ * sup2->friction_ / 2;
+        // sup_new->compute_statistics(); // TODO: uncomment after covariance calculation is fixed
+        // float * rgb_supnew = ColorUtilities::mean_color(sup_new);
+        // GMM_GMR gmmnode_newsup;
+        // Eigen::MatrixXf x(1,3);
+        // // x = sup_new->mean_.head(3).transpose();
+        // x << rgb_supnew[0],rgb_supnew[1],rgb_supnew[2];
+        // auto supnew_predicted_values = gmmnode_newsup.gmr(gmm_weights_global,gmm_means_global,gmm_covariances_global,x,3,1);
+        // sup_new->friction_ = std::get<0>(supnew_predicted_values)[0];
+        // std::cout << "sup new: " << x << "fric: " << sup_new->friction_ << std::endl;
+        sup_new->friction_ = (sup1->friction_+sup2->friction_)/2;
+        auto delta = delta_c_g_h(sup1,sup2);
+        std::cout << "sup1: " << sup1->friction_ << " -- sup2: "  << sup2->friction_ <<  " fric: " << sup_new->friction_ << " delta_c: " << delta[0] << "-- delta_h: "<<delta[2] <<std::endl;
+ 
+        // std::cout << "sup new: " << x << "fric: " << sup_new->friction_ << std::endl;
         // TODO: GMR?
     }
     
@@ -740,8 +861,9 @@ Clustering::Clustering(ColorDistance c, GeometricDistance g, HapticDistance h,
  */
 void Clustering::set_merging(MergingCriterion m) {
     merging_type = m;
-    lambda_c = 1 / 3;
-    lambda_g = 1 / 3;
+    // lambda_c = 1 / 3;
+    lambda_c = 0.5;
+    // lambda_g = 1 / 3;
     bins_num = 500;
     init_initial_weights = false;
 }
@@ -865,6 +987,66 @@ PointLCloudT::Ptr Clustering::get_labeled_cloud() const {
     }
 
     return label_cloud;
+}
+
+/**
+ * Get the pointcloud of the regions corresponding to the current state
+ * 
+ * @return a labelled pointcloud
+ */
+PointCloudT::Ptr Clustering::get_friction_cloud() const {
+    PointCloudT::Ptr friction_cloud(new PointCloudT);
+
+    ClusteringT::const_iterator it = state.segments.begin();
+    ClusteringT::const_iterator it_end = state.segments.end();
+
+    for (; it != it_end; ++it) {
+        PointCloudT cloud = *(it->second->voxels_);
+        PointCloudT::iterator it_cloud = cloud.begin();
+        PointCloudT::iterator it_cloud_end = cloud.end();
+        for (; it_cloud != it_cloud_end; ++it_cloud) {
+            PointT p;
+            p.x = it_cloud->x;
+            p.y = it_cloud->y;
+            p.z = it_cloud->z;
+            p.r = it->second->friction_ * 255;
+            p.g = 0;
+            p.b = 50;
+            friction_cloud->push_back(p);
+        }
+    }
+
+    return friction_cloud;
+}
+
+/**
+ * Get the pointcloud of the regions corresponding to the current state
+ * 
+ * @return a labelled pointcloud
+ */
+PointCloudT::Ptr Clustering::get_uncertainty_cloud() const {
+    PointCloudT::Ptr uncertainty_cloud(new PointCloudT);
+
+    ClusteringT::const_iterator it = state.segments.begin();
+    ClusteringT::const_iterator it_end = state.segments.end();
+
+    for (; it != it_end; ++it) {
+        PointCloudT cloud = *(it->second->voxels_);
+        PointCloudT::iterator it_cloud = cloud.begin();
+        PointCloudT::iterator it_cloud_end = cloud.end();
+        for (; it_cloud != it_cloud_end; ++it_cloud) {
+            PointT p;
+            p.x = it_cloud->x;
+            p.y = it_cloud->y;
+            p.z = it_cloud->z;
+            p.r = 0;
+            p.g = it->second->friction_variance_ * 255;
+            p.b = 0;
+            uncertainty_cloud->push_back(p);
+        }
+    }
+
+    return uncertainty_cloud;
 }
 
 /**

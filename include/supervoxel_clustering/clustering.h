@@ -231,7 +231,8 @@ public:
 
     PointCloudT::Ptr get_colored_cloud() const;
     PointLCloudT::Ptr get_labeled_cloud() const;
-
+    PointCloudT::Ptr get_friction_cloud() const;
+    PointCloudT::Ptr get_uncertainty_cloud() const;
     void cluster(float threshold);
 
     std::map<float, performanceSet> all_thresh(

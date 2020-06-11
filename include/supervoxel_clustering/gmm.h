@@ -87,6 +87,9 @@ class GMMExpectationMaximization
   // initialize by splitting data in equal intervals of the column with id col
   // false if error
   bool autoInitializeByEqualIntervals(uint num_gaussians,uint col,const MatrixX & data);
+
+  bool InitializeByKMeans(uint num_gaussians,const MatrixX & data);
+
   /// execute the algorithm on the data
   /// @param data the data
   /// @returns the number of iterations performed (0 if error)
