@@ -283,6 +283,9 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
     float total_count = 0;
     float colorpoint_per_count = 0;
     float fricpoint_per_count = 0;
+
+    std::ofstream myfile;
+    myfile.open ("/home/trannguyenle/Desktop/example.txt");;
     // Build the GMM
     GMM_GMR gmmnode;
     int n_rows = 100; //0.03 seed ok
@@ -315,6 +318,9 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
     for(auto iter : *segmentation) {
         float f = iter.second->friction_;
         if(f != 0) {
+            //Write data to csv
+            myfile << f << std::endl; 
+
             Eigen::EigenMultivariateNormal<float> normX_solver(iter.second->mean_,iter.second->covariance_);
             Eigen::MatrixXf gmm_indata(n_rows,4);
             gmm_indata << normX_solver.samples(n_rows).transpose();
@@ -421,6 +427,7 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
                 iter.second->friction_ = iter.second->friction_ - iter.second->friction_variance_;
             }
             std::cout << "Mean input: " << x << " -- Fric: " << iter.second->friction_ << " -- Cov: " << iter.second->friction_variance_ << std::endl;
+            myfile << iter.second->friction_ << std::endl;
         }
     }
     for (auto i: gmm_weights)
@@ -430,7 +437,7 @@ void Clustering::estimate_missing_frictions(ClusteringT *segmentation) const {
 
     for (auto i: gmm_covariances)
         std::cout << "covariances: "<< i << std::endl;
-
+    myfile.close();
 }
 
 /**
@@ -1041,7 +1048,7 @@ PointCloudT::Ptr Clustering::get_uncertainty_cloud() const {
             p.z = it_cloud->z;
             p.r = 0;
             p.g = it->second->friction_variance_ * 255;
-            p.b = 0;
+            p.b = 50;
             uncertainty_cloud->push_back(p);
         }
     }

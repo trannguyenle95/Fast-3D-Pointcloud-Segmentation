@@ -49,7 +49,8 @@
 #include "testing.h"
 #include "eigenmvn.h"
 
-
+#include <iostream>
+#include <fstream>
 struct comp_points {
   bool operator() (const pcl::PointXYZ a, const pcl::PointXYZ b) const {
     return (a.x < b.x) || 
